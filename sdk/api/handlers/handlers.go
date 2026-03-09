@@ -22,6 +22,7 @@ import (
 	coreexecutor "github.com/router-for-me/CLIProxyAPI/v6/sdk/cliproxy/executor"
 	"github.com/router-for-me/CLIProxyAPI/v6/sdk/config"
 	sdktranslator "github.com/router-for-me/CLIProxyAPI/v6/sdk/translator"
+	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
 
@@ -261,6 +262,10 @@ type BaseAPIHandler struct {
 
 	// Cfg holds the current application configuration.
 	Cfg *config.SDKConfig
+
+	// FullCfg holds the complete configuration including OpenAICompatibility settings.
+	// This is needed for protocol bridging features where Claude Code can use OpenAI-compatible providers.
+	FullCfg *config.Config
 }
 
 // NewBaseAPIHandlers creates a new API handlers instance.
@@ -279,13 +284,35 @@ func NewBaseAPIHandlers(cfg *config.SDKConfig, authManager *coreauth.Manager) *B
 	}
 }
 
+// NewBaseAPIHandlersWithFullConfig creates a new API handlers instance with full configuration.
+// This enables protocol bridging features where Claude Code can use OpenAI-compatible providers.
+//
+// Parameters:
+//   - cfg: The full application configuration
+//   - authManager: The auth manager for credential handling
+//
+// Returns:
+//   - *BaseAPIHandler: A new API handlers instance
+func NewBaseAPIHandlersWithFullConfig(cfg *config.Config, authManager *coreauth.Manager) *BaseAPIHandler {
+	return &BaseAPIHandler{
+		Cfg:         &cfg.SDKConfig,
+		FullCfg:     cfg,
+		AuthManager: authManager,
+	}
+}
+
 // UpdateClients updates the handlers' client list and configuration.
 // This method is called when the configuration or authentication tokens change.
 //
 // Parameters:
-//   - clients: The new slice of AI service clients
-//   - cfg: The new application configuration
-func (h *BaseAPIHandler) UpdateClients(cfg *config.SDKConfig) { h.Cfg = cfg }
+//   - cfg: The new application configuration (SDKConfig portion)
+//   - fullCfg: The full application configuration (optional, for protocol bridging)
+func (h *BaseAPIHandler) UpdateClients(cfg *config.SDKConfig, fullCfg *config.Config) {
+	h.Cfg = cfg
+	if fullCfg != nil {
+		h.FullCfg = fullCfg
+	}
+}
 
 // GetAlt extracts the 'alt' parameter from the request query string.
 // It checks both 'alt' and '$alt' parameters and returns the appropriate value.
@@ -790,6 +817,26 @@ func (h *BaseAPIHandler) getRequestDetails(modelName string) (providers []string
 
 	parsed := thinking.ParseSuffix(resolvedModelName)
 	baseModel := strings.TrimSpace(parsed.ModelName)
+
+	// Check if this model is configured as a Claude alias for an OpenAI-compatible provider.
+	// This enables Claude Code to use OpenAI-compatible providers (like GLM) through /v1/messages
+	// with automatic protocol translation from Claude format to OpenAI format.
+	if h.FullCfg != nil {
+		log.Infof("[ClaudeAlias Debug] Checking Claude alias for model %s, OpenAICompatibility providers: %d", baseModel, len(h.FullCfg.OpenAICompatibility))
+		providerName, upstreamModel, compat := util.GetOpenAICompatClaudeAlias(baseModel, h.FullCfg)
+		log.Infof("[ClaudeAlias Debug] Claude alias lookup result: providerName=%s, upstreamModel=%s, compat=%v", providerName, upstreamModel, compat != nil)
+		if providerName != "" && upstreamModel != "" {
+			// Return the provider name (e.g., "nvidia-glm") with the upstream model name
+			// The translator will handle the format conversion from Claude to OpenAI
+			log.Infof("[ClaudeAlias Debug] Routing to provider %s with model %s", providerName, upstreamModel)
+			if parsed.HasSuffix {
+				return []string{providerName}, fmt.Sprintf("%s(%s)", upstreamModel, parsed.RawSuffix), nil
+			}
+			return []string{providerName}, upstreamModel, nil
+		}
+	} else {
+		log.Infof("[ClaudeAlias Debug] FullCfg is nil, cannot check Claude alias")
+	}
 
 	providers = util.GetProviderName(baseModel)
 	// Fallback: if baseModel has no provider but differs from resolvedModelName,

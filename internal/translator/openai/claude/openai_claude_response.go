@@ -403,11 +403,37 @@ func convertOpenAINonStreamingToAnthropic(rawJSON []byte) []string {
 			out, _ = sjson.SetRaw(out, "content.-1", block)
 		}
 
-		// Handle text content
-		if content := choice.Get("message.content"); content.Exists() && content.String() != "" {
-			block := `{"type":"text","text":""}`
-			block, _ = sjson.Set(block, "text", content.String())
-			out, _ = sjson.SetRaw(out, "content.-1", block)
+		// Handle content (support both string and array formats)
+		if content := choice.Get("message.content"); content.Exists() {
+			if content.IsArray() {
+				// Handle array format (e.g., mixed text and image_url)
+				content.ForEach(func(_, item gjson.Result) bool {
+					itemType := item.Get("type").String()
+					switch itemType {
+					case "text":
+						text := item.Get("text").String()
+						if text != "" {
+							block := `{"type":"text","text":""}`
+							block, _ = sjson.Set(block, "text", text)
+							out, _ = sjson.SetRaw(out, "content.-1", block)
+						}
+					case "image_url":
+						// Convert image_url back to Claude format
+						imageURL := item.Get("image_url.url").String()
+						if imageURL != "" {
+							block := `{"type":"image","source":{"type":"url","url":""}}`
+							block, _ = sjson.Set(block, "source.url", imageURL)
+							out, _ = sjson.SetRaw(out, "content.-1", block)
+						}
+					}
+					return true
+				})
+			} else if content.Type == gjson.String && content.String() != "" {
+				// Handle string format
+				block := `{"type":"text","text":""}`
+				block, _ = sjson.Set(block, "text", content.String())
+				out, _ = sjson.SetRaw(out, "content.-1", block)
+			}
 		}
 
 		// Handle tool calls

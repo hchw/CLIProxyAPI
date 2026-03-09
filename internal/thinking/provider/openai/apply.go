@@ -56,7 +56,12 @@ func (a *Applier) Apply(body []byte, config thinking.ThinkingConfig, modelInfo *
 	}
 
 	if config.Mode == thinking.ModeLevel {
-		result, _ := sjson.SetBytes(body, "reasoning_effort", string(config.Level))
+		// Map xhigh to high since vLLM only supports low/medium/high
+		level := string(config.Level)
+		if level == string(thinking.LevelXHigh) {
+			level = string(thinking.LevelHigh)
+		}
+		result, _ := sjson.SetBytes(body, "reasoning_effort", level)
 		return result, nil
 	}
 
@@ -68,7 +73,12 @@ func (a *Applier) Apply(body []byte, config thinking.ThinkingConfig, modelInfo *
 		}
 	}
 	if effort == "" && config.Level != "" {
-		effort = string(config.Level)
+		// Map xhigh to high since vLLM only supports low/medium/high
+		level := string(config.Level)
+		if level == string(thinking.LevelXHigh) {
+			level = string(thinking.LevelHigh)
+		}
+		effort = level
 	}
 	if effort == "" && len(support.Levels) > 0 {
 		effort = support.Levels[0]
@@ -92,20 +102,34 @@ func applyCompatibleOpenAI(body []byte, config thinking.ThinkingConfig) ([]byte,
 		if config.Level == "" {
 			return body, nil
 		}
-		effort = string(config.Level)
+		// Map xhigh to high since vLLM only supports low/medium/high
+		level := string(config.Level)
+		if level == string(thinking.LevelXHigh) {
+			level = string(thinking.LevelHigh)
+		}
+		effort = level
 	case thinking.ModeNone:
 		effort = string(thinking.LevelNone)
 		if config.Level != "" {
-			effort = string(config.Level)
+			// Map xhigh to high since vLLM only supports low/medium/high
+			level := string(config.Level)
+			if level == string(thinking.LevelXHigh) {
+				level = string(thinking.LevelHigh)
+			}
+			effort = level
 		}
 	case thinking.ModeAuto:
 		// Auto mode for user-defined models: pass through as "auto"
 		effort = string(thinking.LevelAuto)
 	case thinking.ModeBudget:
 		// Budget mode: convert budget to level using threshold mapping
+		// Map xhigh to high since vLLM only supports low/medium/high
 		level, ok := thinking.ConvertBudgetToLevel(config.Budget)
 		if !ok {
 			return body, nil
+		}
+		if level == string(thinking.LevelXHigh) {
+			level = string(thinking.LevelHigh)
 		}
 		effort = level
 	default:

@@ -6,6 +6,7 @@
 package claude
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/thinking"
@@ -85,7 +86,8 @@ func ConvertClaudeRequestToOpenAI(modelName string, inputRawJSON []byte, stream 
 				if effort != "" {
 					out, _ = sjson.Set(out, "reasoning_effort", effort)
 				} else {
-					out, _ = sjson.Set(out, "reasoning_effort", string(thinking.LevelXHigh))
+					// Default to "high" instead of "xhigh" since vLLM only supports low/medium/high
+					out, _ = sjson.Set(out, "reasoning_effort", string(thinking.LevelHigh))
 				}
 			case "disabled":
 				if effort, ok := thinking.ConvertBudgetToLevel(0); ok && effort != "" {
@@ -374,11 +376,108 @@ func convertClaudeContentPart(part gjson.Result) (string, bool) {
 
 		return imageContent, true
 
+	case "document":
+		// Handle document/file content (important for Claude Code coding capabilities)
+		var fileURL string
+
+		if source := part.Get("source"); source.Exists() {
+			sourceType := source.Get("type").String()
+			switch sourceType {
+			case "base64":
+				mediaType := source.Get("media_type").String()
+				if mediaType == "" {
+					// Infer media type from common document types
+					filename := part.Get("name").String()
+					mediaType = inferMediaTypeFromFilename(filename)
+				}
+				data := source.Get("data").String()
+				if data != "" {
+					fileURL = "data:" + mediaType + ";base64," + data
+				}
+			case "url":
+				fileURL = source.Get("url").String()
+			}
+		}
+
+		if fileURL == "" {
+			// Try to get file_url directly
+			fileURL = part.Get("file_url").String()
+		}
+
+		if fileURL == "" {
+			return "", false
+		}
+
+		// Use text content type with description for documents
+		fileContent := `{"type":"text","text":""}`
+		citations := part.Get("citations").String()
+		name := part.Get("name").String()
+		if name != "" {
+			fileContent, _ = sjson.Set(fileContent, "text", fmt.Sprintf("[File: %s]\n%s", name, citations))
+		} else {
+			fileContent, _ = sjson.Set(fileContent, "text", fmt.Sprintf("[Document content]\n%s", citations))
+		}
+
+		return fileContent, true
+
 	default:
 		return "", false
 	}
 }
 
+func inferMediaTypeFromFilename(filename string) string {
+	if filename == "" {
+		return "application/octet-stream"
+	}
+	lower := strings.ToLower(filename)
+	switch {
+	case strings.HasSuffix(lower, ".js"), strings.HasSuffix(lower, ".jsx"), strings.HasSuffix(lower, ".ts"), strings.HasSuffix(lower, ".tsx"):
+		return "text/javascript"
+	case strings.HasSuffix(lower, ".py"), strings.HasSuffix(lower, ".pyx"), strings.HasSuffix(lower, ".pyi"):
+		return "text/x-python"
+	case strings.HasSuffix(lower, ".java"):
+		return "text/x-java"
+	case strings.HasSuffix(lower, ".c"), strings.HasSuffix(lower, ".h"):
+		return "text/x-c"
+	case strings.HasSuffix(lower, ".cpp"), strings.HasSuffix(lower, ".hpp"), strings.HasSuffix(lower, ".cc"):
+		return "text/x-c++"
+	case strings.HasSuffix(lower, ".go"):
+		return "text/x-go"
+	case strings.HasSuffix(lower, ".rs"):
+		return "text/x-rust"
+	case strings.HasSuffix(lower, ".rb"):
+		return "text/x-ruby"
+	case strings.HasSuffix(lower, ".php"):
+		return "text/x-php"
+	case strings.HasSuffix(lower, ".swift"):
+		return "text/x-swift"
+	case strings.HasSuffix(lower, ".kt"):
+		return "text/x-kotlin"
+	case strings.HasSuffix(lower, ".sh"), strings.HasSuffix(lower, ".bash"):
+		return "text/x-shellscript"
+	case strings.HasSuffix(lower, ".json"):
+		return "application/json"
+	case strings.HasSuffix(lower, ".yaml"), strings.HasSuffix(lower, ".yml"):
+		return "text/x-yaml"
+	case strings.HasSuffix(lower, ".xml"):
+		return "text/xml"
+	case strings.HasSuffix(lower, ".md"):
+		return "text/markdown"
+	case strings.HasSuffix(lower, ".txt"):
+		return "text/plain"
+	case strings.HasSuffix(lower, ".html"):
+		return "text/html"
+	case strings.HasSuffix(lower, ".css"):
+		return "text/css"
+	case strings.HasSuffix(lower, ".sql"):
+		return "text/x-sql"
+	default:
+		return "application/octet-stream"
+	}
+}
+
+// convertClaudeToolResultContent converts Claude tool result content to string format.
+// Returns the content string and a boolean indicating if it's raw JSON (true) or plain text (false).
 func convertClaudeToolResultContent(content gjson.Result) (string, bool) {
 	if !content.Exists() {
 		return "", false

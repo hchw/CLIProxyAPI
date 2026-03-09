@@ -493,6 +493,12 @@ type OpenAICompatibilityModel struct {
 
 	// Alias is the model name alias that clients will use to reference this model.
 	Alias string `yaml:"alias" json:"alias"`
+
+	// ClaudeAlias is an optional alias that exposes this model through the Claude /v1/messages endpoint.
+	// When set, requests to /v1/messages with this model name will be translated from Claude format
+	// to OpenAI format and routed to this OpenAI-compatible provider.
+	// This enables Claude Code to use OpenAI-compatible providers like GLM.
+	ClaudeAlias string `yaml:"claude-alias,omitempty" json:"claude-alias,omitempty"`
 }
 
 func (m OpenAICompatibilityModel) GetName() string  { return m.Name }

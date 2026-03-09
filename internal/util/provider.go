@@ -267,3 +267,41 @@ func shouldMaskQueryParam(key string) bool {
 	}
 	return false
 }
+
+// GetOpenAICompatClaudeAlias checks if a model name is configured as a Claude alias
+// for an OpenAI compatibility provider. This enables Claude Code to use OpenAI-compatible
+// providers through the /v1/messages endpoint with automatic protocol translation.
+//
+// Parameters:
+//   - modelName: The model name to check (the Claude alias)
+//   - cfg: The application configuration
+//
+// Returns:
+//   - string: The OpenAI compatibility provider name (e.g., "openrouter"), empty if not found
+//   - string: The model alias to use for routing (uses Alias if set, otherwise Name), empty if not found
+//   - *config.OpenAICompatibility: The compatibility configuration, nil if not found
+func GetOpenAICompatClaudeAlias(modelName string, cfg *config.Config) (string, string, *config.OpenAICompatibility) {
+	if cfg == nil || modelName == "" {
+		return "", "", nil
+	}
+
+	for i := range cfg.OpenAICompatibility {
+		compat := &cfg.OpenAICompatibility[i]
+		for _, model := range compat.Models {
+			if model.ClaudeAlias == modelName {
+				providerName := compat.Name
+				if providerName == "" {
+					providerName = "openai-compatibility"
+				}
+				// Use alias for routing (this is the name registered in the model registry)
+				// Fall back to Name if Alias is not set
+				routingModel := model.Alias
+				if routingModel == "" {
+					routingModel = model.Name
+				}
+				return providerName, routingModel, compat
+			}
+		}
+	}
+	return "", "", nil
+}

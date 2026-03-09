@@ -893,6 +893,8 @@ func (s *Service) registerModelsForAuth(a *coreauth.Auth) {
 					isCompatAuth = true
 					// Convert compatibility models to registry models
 					ms := make([]*ModelInfo, 0, len(compat.Models))
+					// Also collect Claude alias models for protocol bridging
+					claudeAliasModels := make([]*ModelInfo, 0)
 					for j := range compat.Models {
 						m := compat.Models[j]
 						// Use alias as model ID, fallback to name if alias is empty
@@ -909,6 +911,19 @@ func (s *Service) registerModelsForAuth(a *coreauth.Auth) {
 							DisplayName: modelID,
 							UserDefined: true,
 						})
+						// If ClaudeAlias is set, also register as a Claude-compatible model
+						// This enables Claude Code to use this model through /v1/messages
+						if m.ClaudeAlias != "" {
+							claudeAliasModels = append(claudeAliasModels, &ModelInfo{
+								ID:          m.ClaudeAlias,
+								Object:      "model",
+								Created:     time.Now().Unix(),
+								OwnedBy:     compat.Name,
+								Type:        "claude",
+								DisplayName: m.ClaudeAlias,
+								UserDefined: true,
+							})
+						}
 					}
 					// Register and return
 					if len(ms) > 0 {
@@ -916,9 +931,15 @@ func (s *Service) registerModelsForAuth(a *coreauth.Auth) {
 							providerKey = "openai-compatibility"
 						}
 						GlobalModelRegistry().RegisterClient(a.ID, providerKey, applyModelPrefixes(ms, a.Prefix, s.cfg.ForceModelPrefix))
+						// Also register Claude alias models under the same client but with "claude" provider
+						// This allows them to be discovered when listing models for Claude handler
+						if len(claudeAliasModels) > 0 {
+							GlobalModelRegistry().RegisterClient(a.ID+"_claude_alias", "openai-compatibility", applyModelPrefixes(claudeAliasModels, a.Prefix, s.cfg.ForceModelPrefix))
+						}
 					} else {
 						// Ensure stale registrations are cleared when model list becomes empty.
 						GlobalModelRegistry().UnregisterClient(a.ID)
+						GlobalModelRegistry().UnregisterClient(a.ID + "_claude_alias")
 					}
 					return
 				}
